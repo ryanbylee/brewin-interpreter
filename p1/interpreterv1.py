@@ -19,7 +19,7 @@ class Interpreter(InterpreterBase):
 
     def run_func(self, function):
         for statement in function.dict['statements']:
-            self.run_statement(self, statement)
+            self.run_statement(statement)
 
     def run_statement(self, statement):
         if statement.elem_type == '=':
@@ -28,21 +28,16 @@ class Interpreter(InterpreterBase):
             self.do_function_call_statement(statement)
     
     def do_assignment(self, statement):
-        # grab target variable from map
-        try:
-            target_var = self.variables[statement.dict['name']]
-        except:
-            self.variables[statement.dict['name']] = 0
-            target_var = self.variables[statement.dict['name']]
         
         expression = statement.dict['expression']
         result = self.evaluate_expression(expression)
-        self.variables[target_var] = result
+        self.variables[statement.dict['name']] = result
 
     def evaluate_expression(self, expression):
         
         if expression.elem_type == '+' or expression.elem_type == '-':
             op1, op2 = self.evaluate_expression(expression.dict['op1']), self.evaluate_expression(expression.dict['op2'])
+
             try:
                 return op1 + op2 if expression.elem_type == '+' else op1 - op2
             except:
@@ -81,6 +76,9 @@ class Interpreter(InterpreterBase):
             super.output(prompt)
             user_input = super().get_input()
             return int(user_input)
+        else:
+            super().error(ErrorType.NAME_ERROR,
+                f"Unknown function reference {expression.dict['name']}")
         
     def do_function_call_statement(self, statement):
         
@@ -89,5 +87,8 @@ class Interpreter(InterpreterBase):
             for expression in statement.dict['args']:
                 res += str(self.evaluate_expression(expression))
             super().output(res)
+        else:
+            super().error(ErrorType.NAME_ERROR,
+                f"Unknown function reference {statement.dict['name']}")
 
 
