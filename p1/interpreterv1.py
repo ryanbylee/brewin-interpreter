@@ -9,6 +9,7 @@ class Interpreter(InterpreterBase):
 
     def run(self, program):
         ast = parse_program(program)
+        print(ast)
         main_function = self.get_main_function(ast)
         self.run_func(main_function)
 
@@ -16,6 +17,11 @@ class Interpreter(InterpreterBase):
         for function in ast.dict['functions']:
             if function.dict['name'] == 'main':
                 return function
+        
+        super().error(
+            ErrorType.NAME_ERROR,
+            "No main() function was found",
+        )
 
     def run_func(self, function):
         for statement in function.dict['statements']:
@@ -66,14 +72,13 @@ class Interpreter(InterpreterBase):
     def do_function_call_expression(self, expression):
         
         if expression.dict['name'] == 'inputi':
-            prompt = ""
             if len(expression.dict['args']) > 1:
                 super().error(
                     ErrorType.NAME_ERROR,
                     f"No inputi() function found that takes > 1 parameter",
                 )
-            prompt += expression.dict['args'][0] if len(expression.dict['args']) == 1 else ""
-            super.output(prompt)
+            prompt = self.evaluate_expression(expression.dict['args'][0]) if len(expression.dict['args']) == 1 else ""
+            super().output(prompt)
             user_input = super().get_input()
             return int(user_input)
         else:
@@ -92,3 +97,10 @@ class Interpreter(InterpreterBase):
                 f"Unknown function reference {statement.dict['name']}")
 
 
+
+def main():
+    program = 'func main(){a = 12 + inputi("input a number:" );print(a);}'
+    interpreter = Interpreter()
+    interpreter.run(program)
+if __name__ == '__main__':
+    main()
