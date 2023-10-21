@@ -45,7 +45,10 @@ class Interpreter(InterpreterBase):
             op1, op2 = self.evaluate_expression(expression.dict['op1']), self.evaluate_expression(expression.dict['op2'])
 
             try:
-                return op1 + op2 if expression.elem_type == '+' else op1 - op2
+                if expression.elem_type == '+':
+                    return op1 + op2
+                elif expression.elem_type == '-':
+                    return op1 - op2
             except:
                 super().error(
                     ErrorType.TYPE_ERROR,
@@ -77,8 +80,9 @@ class Interpreter(InterpreterBase):
                     ErrorType.NAME_ERROR,
                     f"No inputi() function found that takes > 1 parameter",
                 )
-            prompt = self.evaluate_expression(expression.dict['args'][0]) if len(expression.dict['args']) == 1 else ""
-            super().output(prompt)
+            prompt = str(self.evaluate_expression(expression.dict['args'][0])) if len(expression.dict['args']) == 1 else ""
+            if prompt:
+                super().output(prompt)
             user_input = super().get_input()
             return int(user_input)
         else:
