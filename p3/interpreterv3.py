@@ -2,9 +2,9 @@ import copy
 from enum import Enum
 
 from brewparse import parse_program
-from env_v2 import EnvironmentManager
+from env_v3 import EnvironmentManager
 from intbase import InterpreterBase, ErrorType
-from type_valuev2 import Type, Value, create_value, get_printable
+from type_valuev3 import Type, Value, create_value, get_printable
 
 
 class ExecStatus(Enum):
@@ -157,9 +157,9 @@ class Interpreter(InterpreterBase):
         if expr_ast.elem_type in Interpreter.BIN_OPS:
             return self.__eval_op(expr_ast)
         if expr_ast.elem_type == Interpreter.NEG_DEF:
-            return self.__eval_unary(expr_ast, Type.INT, lambda x: -1 * x)
+            return self.__eval_unary(expr_ast, [Type.INT], lambda x: -1 * x)
         if expr_ast.elem_type == Interpreter.NOT_DEF:
-            return self.__eval_unary(expr_ast, Type.BOOL, lambda x: not x)
+            return self.__eval_unary(expr_ast, [Type.BOOL, Type.INT], lambda x: not x)
 
     def __eval_op(self, arith_ast):
         left_value_obj = self.__eval_expr(arith_ast.get("op1"))
@@ -187,38 +187,51 @@ class Interpreter(InterpreterBase):
         # DOCUMENT: allow comparisons ==/!= of anything against anything
         if oper in ["==", "!="]:
             return True
+        elif oper in ["&&", "||", "+", "-", "*", "/"]:
+            return (obj1.type() == Type.BOOL or obj1.type() == Type.INT) and (
+                obj2.type() == Type.BOOL or obj2.type() == Type.INT
+            )
         return obj1.type() == obj2.type()
 
     def __eval_unary(self, arith_ast, t, f):
         value_obj = self.__eval_expr(arith_ast.get("op1"))
-        if value_obj.type() != t:
+        if value_obj.type() not in t:
             super().error(
                 ErrorType.TYPE_ERROR,
                 f"Incompatible type for {arith_ast.elem_type} operation",
             )
-        return Value(t, f(value_obj.value()))
+        if len(t) == 2:
+            return Value(Type.BOOL, (bool)(f(value_obj.value())))
+        return Value(t[0], f(value_obj.value()))
 
     def __setup_ops(self):
         self.op_to_lambda = {}
         # set up operations on integers
         self.op_to_lambda[Type.INT] = {}
         self.op_to_lambda[Type.INT]["+"] = lambda x, y: Value(
-            x.type(), x.value() + y.value()
+            x.type(), x.value() + y.value() if y.type() == Type.INT else (x.value() + 1 if y.value() else x.value())
         )
         self.op_to_lambda[Type.INT]["-"] = lambda x, y: Value(
-            x.type(), x.value() - y.value()
+            x.type(), x.value() - y.value() if y.type() == Type.INT else (x.value() - 1 if y.value() else x.value())
         )
         self.op_to_lambda[Type.INT]["*"] = lambda x, y: Value(
-            x.type(), x.value() * y.value()
+            x.type(), x.value() * y.value() if y.type() == Type.INT else (x.value() * 1 if y.value() else 0)
         )
         self.op_to_lambda[Type.INT]["/"] = lambda x, y: Value(
-            x.type(), x.value() // y.value()
+            x.type(), x.value() // y.value() if y.type() == Type.INT else (x.value() // 1 if y.value() else 0)
         )
         self.op_to_lambda[Type.INT]["=="] = lambda x, y: Value(
-            Type.BOOL, x.type() == y.type() and x.value() == y.value()
+            Type.BOOL, (x.type() == y.type() or y.type() == Type.BOOL) and 
+            ((x.value() != 0 and y.value() == True) or (x.value() == 0 and y.value() == False)) if y.type() == Type.BOOL else ((x.value() != 0 and y.value() != 0) or x.value() == 0 and y.value() == 0)
         )
         self.op_to_lambda[Type.INT]["!="] = lambda x, y: Value(
-            Type.BOOL, x.type() != y.type() or x.value() != y.value()
+            Type.BOOL, (x.type() != y.type() and y.type() != Type.BOOL) or ((x.value() == 0 and y.value() == True) or (x.value() != 0 and y.value() == False))
+        )
+        self.op_to_lambda[Type.INT]["&&"] = lambda x, y: Value(
+            Type.BOOL, (x.type() == y.type() or y.type() == Type.BOOL) and (bool)(x.value() and y.value())
+        )
+        self.op_to_lambda[Type.INT]["||"] = lambda x, y: Value(
+            Type.BOOL, (x.type() == y.type() or y.type() == Type.BOOL) and (bool)(x.value() or y.value())
         )
         self.op_to_lambda[Type.INT]["<"] = lambda x, y: Value(
             Type.BOOL, x.value() < y.value()
@@ -246,18 +259,44 @@ class Interpreter(InterpreterBase):
         #  set up operations on bools
         self.op_to_lambda[Type.BOOL] = {}
         self.op_to_lambda[Type.BOOL]["&&"] = lambda x, y: Value(
-            x.type(), x.value() and y.value()
+            x.type(), (x.type() == y.type() or y.type() == Type.INT) and (bool)(x.value() and y.value())
         )
         self.op_to_lambda[Type.BOOL]["||"] = lambda x, y: Value(
-            x.type(), x.value() or y.value()
+            x.type(), (x.type() == y.type() or y.type() == Type.INT) and (bool)(x.value() or y.value())
         )
         self.op_to_lambda[Type.BOOL]["=="] = lambda x, y: Value(
-            Type.BOOL, x.type() == y.type() and x.value() == y.value()
+            Type.BOOL, (x.type() == y.type() or y.type() == Type.INT) and ((x.value() == True and y.value() != 0) or (x.value() == False and y.value() == 0))
         )
         self.op_to_lambda[Type.BOOL]["!="] = lambda x, y: Value(
-            Type.BOOL, x.type() != y.type() or x.value() != y.value()
+            Type.BOOL, (x.type() != y.type() and y.type() != Type.INT) or ((x.value() == True and y.value() == 0) or (x.value() == False and y.value() != 0))
         )
-
+        self.op_to_lambda[Type.BOOL]["+"] = lambda x, y: Value(
+            Type.INT, 1 + y.value() if y.type() == Type.INT and x.value() 
+            else (y.value() if y.type() == Type.INT 
+                  else (1 + 1 if x.value() and y.value() 
+                        else (1 if x.value() ^ y.value() 
+                              else 0)))
+        )
+        self.op_to_lambda[Type.BOOL]["-"] = lambda x, y: Value(
+            Type.INT, 1 - y.value() if y.type() == Type.INT and x.value() 
+            else (-1 * y.value() if y.type() == Type.INT 
+                  else (0 if x.value() and y.value() 
+                        else (1 if x.value() and not y.value() 
+                              else (-1 if not x.value() and y.value() 
+                                    else 0))))
+        )
+        self.op_to_lambda[Type.BOOL]["*"] = lambda x, y: Value(
+            Type.INT, y.value() if y.type() == Type.INT and x.value() 
+            else (0 if y.type() == Type.INT 
+                  else (1 if x.value() and y.value() 
+                        else 0))
+        )
+        self.op_to_lambda[Type.BOOL]["/"] = lambda x, y: Value(
+            Type.INT, 1 // y.value() if y.type() == Type.INT and x.value() 
+            else (0 if y.type() == Type.INT 
+                  else (1 if x.value() and y.value() 
+                        else x.value() // y.value()))
+        )
         #  set up operations on nil
         self.op_to_lambda[Type.NIL] = {}
         self.op_to_lambda[Type.NIL]["=="] = lambda x, y: Value(
@@ -270,7 +309,9 @@ class Interpreter(InterpreterBase):
     def __do_if(self, if_ast):
         cond_ast = if_ast.get("condition")
         result = self.__eval_expr(cond_ast)
-        if result.type() != Type.BOOL:
+        if result.type() == Type.INT:
+            result = Value(Type.BOOL, result.value() != 0)
+        elif result.type() != Type.BOOL:
             super().error(
                 ErrorType.TYPE_ERROR,
                 "Incompatible type for if condition",
@@ -292,7 +333,9 @@ class Interpreter(InterpreterBase):
         run_while = Interpreter.TRUE_VALUE
         while run_while.value():
             run_while = self.__eval_expr(cond_ast)
-            if run_while.type() != Type.BOOL:
+            if run_while.type() == Type.INT:
+                run_while = Value(Type.BOOL, run_while.value() != 0)
+            elif run_while.type() != Type.BOOL:
                 super().error(
                     ErrorType.TYPE_ERROR,
                     "Incompatible type for while condition",
@@ -311,3 +354,12 @@ class Interpreter(InterpreterBase):
             return (ExecStatus.RETURN, Interpreter.NIL_VALUE)
         value_obj = copy.deepcopy(self.__eval_expr(expr_ast))
         return (ExecStatus.RETURN, value_obj)
+
+def main():
+    program = 'func main() {\
+        print(1 == 2);\
+}'
+    interpreter = Interpreter()
+    interpreter.run(program)
+if __name__ == '__main__':
+    main()
