@@ -30,24 +30,45 @@ class Interpreter(InterpreterBase):
     # into an abstract syntax tree (ast)
     def run(self, program):
         ast = parse_program(program)
-        self.__set_up_function_table(ast)
         self.env = EnvironmentManager()
+        self.__set_up_function_table(ast)
         main_func = self.__get_func_by_name("main", 0)
         self.__run_statements(main_func.get("statements"))
 
     def __set_up_function_table(self, ast):
         self.func_name_to_ast = {}
         for func_def in ast.get("functions"):
+            dup = False
             func_name = func_def.get("name")
             num_params = len(func_def.get("args"))
             if func_name not in self.func_name_to_ast:
                 self.func_name_to_ast[func_name] = {}
+            else:
+                dup = True
             self.func_name_to_ast[func_name][num_params] = func_def
 
+            # TODO: check for duplicate function names
+            if not dup:
+                self.env.set(func_name, func_def)
+
     def __get_func_by_name(self, name, num_params):
+        first_class = False
         if name not in self.func_name_to_ast:
-            super().error(ErrorType.NAME_ERROR, f"Function {name} not found")
+            first_class = True
+            assigned_func = self.env.get(name)
+            if assigned_func is not None:
+                try:
+                    name = assigned_func.get("name")
+                except:
+                    return assigned_func.value()
+            else:
+                super().error(ErrorType.NAME_ERROR, f"Function {name} not found")
         candidate_funcs = self.func_name_to_ast[name]
+        if len(candidate_funcs) > 1 and first_class:
+            super().error(
+                ErrorType.NAME_ERROR,
+                f"Function {name} has multiple definitions, must specify number of parameters",
+            )
         if num_params not in candidate_funcs:
             super().error(
                 ErrorType.NAME_ERROR,
@@ -80,6 +101,7 @@ class Interpreter(InterpreterBase):
         return (ExecStatus.CONTINUE, Interpreter.NIL_VALUE)
 
     def __call_func(self, call_node):
+
         func_name = call_node.get("name")
         if func_name == "print":
             return self.__call_print(call_node)
@@ -87,21 +109,30 @@ class Interpreter(InterpreterBase):
             return self.__call_input(call_node)
         if func_name == "inputs":
             return self.__call_input(call_node)
+        try:
+            actual_args = call_node.get("args")
+            func_ast = self.__get_func_by_name(func_name, len(actual_args))
+            formal_args = func_ast.get("args")
+        except:
+            super().error(ErrorType.TYPE_ERROR, "Function call not found")
 
-        actual_args = call_node.get("args")
-        func_ast = self.__get_func_by_name(func_name, len(actual_args))
-        formal_args = func_ast.get("args")
         if len(actual_args) != len(formal_args):
             super().error(
                 ErrorType.NAME_ERROR,
                 f"Function {func_ast.get('name')} with {len(actual_args)} args not found",
             )
         self.env.push()
+        self.env.ref_push()
         for formal_ast, actual_ast in zip(formal_args, actual_args):
             result = copy.deepcopy(self.__eval_expr(actual_ast))
             arg_name = formal_ast.get("name")
-            self.env.create(arg_name, result)
+            if formal_ast.elem_type == InterpreterBase.REFARG_DEF:
+                self.env.create(arg_name, result)
+                self.env.ref_create(arg_name, actual_ast.get("name"))
+            else:
+                self.env.create(arg_name, result)
         _, return_val = self.__run_statements(func_ast.get("statements"))
+        self.env.ref_pop()
         self.env.pop()
         return return_val
 
@@ -132,6 +163,8 @@ class Interpreter(InterpreterBase):
         var_name = assign_ast.get("name")
         value_obj = self.__eval_expr(assign_ast.get("expression"))
         self.env.set(var_name, value_obj)
+        if self.env.get_ref(var_name) is not None:
+            self.env.ref_set(var_name, value_obj)
 
     def __eval_expr(self, expr_ast):
         # print("here expr")
@@ -146,6 +179,8 @@ class Interpreter(InterpreterBase):
             return Value(Type.STRING, expr_ast.get("val"))
         if expr_ast.elem_type == InterpreterBase.BOOL_DEF:
             return Value(Type.BOOL, expr_ast.get("val"))
+        if expr_ast.elem_type == InterpreterBase.LAMBDA_DEF:
+            return Value(Type.FUNC, expr_ast)
         if expr_ast.elem_type == InterpreterBase.VAR_DEF:
             var_name = expr_ast.get("name")
             val = self.env.get(var_name)
@@ -161,6 +196,8 @@ class Interpreter(InterpreterBase):
         if expr_ast.elem_type == Interpreter.NOT_DEF:
             return self.__eval_unary(expr_ast, [Type.BOOL, Type.INT], lambda x: not x)
 
+
+
     def __eval_op(self, arith_ast):
         left_value_obj = self.__eval_expr(arith_ast.get("op1"))
         right_value_obj = self.__eval_expr(arith_ast.get("op2"))
@@ -171,12 +208,21 @@ class Interpreter(InterpreterBase):
                 ErrorType.TYPE_ERROR,
                 f"Incompatible types for {arith_ast.elem_type} operation",
             )
-        if arith_ast.elem_type not in self.op_to_lambda[left_value_obj.type()]:
+        if hasattr(left_value_obj, 'elem_type') and left_value_obj.elem_type != 'func' and arith_ast.elem_type not in self.op_to_lambda[left_value_obj.type()]:
             super().error(
                 ErrorType.TYPE_ERROR,
-                f"Incompatible operator {arith_ast.elem_type} for type {left_value_obj.type()}",
+                f"Incompatible operator {arith_ast.elem_type} for type {left_value_obj.elem_type}",
             )
-        f = self.op_to_lambda[left_value_obj.type()][arith_ast.elem_type]
+        
+        elif hasattr(left_value_obj, 'elem_type') and left_value_obj.elem_type == 'func':
+            if arith_ast.elem_type not in self.op_to_lambda[Type.FUNC]:
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"Incompatible operator {arith_ast.elem_type} for type {left_value_obj.elem_type}",
+                )
+            f = self.op_to_lambda[Type.FUNC][arith_ast.elem_type]
+        else:
+            f = self.op_to_lambda[left_value_obj.type()][arith_ast.elem_type]
         # print("here eval")
         # print(arith_ast)
         # print("evaluating " + str(left_value_obj.type()) + " " + str(arith_ast.elem_type))
@@ -297,13 +343,32 @@ class Interpreter(InterpreterBase):
                   else (1 if x.value() and y.value() 
                         else x.value() // y.value()))
         )
+        self.op_to_lambda[Type.FUNC] = {}
+        self.op_to_lambda[Type.FUNC]["=="] = lambda x, y: Value(
+            Type.BOOL, x is y if hasattr(x, 'elem_type') and hasattr(y,'elem_type') 
+                else (x.value() is y.value() if hasattr(x, 'type') and hasattr(y, 'type') 
+                      else(x.value() is y if hasattr(x, 'type') and hasattr(y, 'elem_type') 
+                           else(x is y.value() if hasattr(x, 'elem_type') and hasattr(y, 'type')
+                                else (x is y))))
+        )
+        self.op_to_lambda[Type.FUNC]["!="] = lambda x, y: Value(
+            Type.BOOL, x is not y if hasattr(x, 'elem_type') and hasattr(y,'elem_type') 
+                else (x.value() is not y.value() if hasattr(x, 'type') and hasattr(y, 'type') 
+                      else(x.value() is not y if hasattr(x, 'type') and hasattr(y, 'elem_type') 
+                           else(x is not y.value() if hasattr(x, 'elem_type') and hasattr(y, 'type')
+                                else (x is not y))))
+        )
         #  set up operations on nil
         self.op_to_lambda[Type.NIL] = {}
         self.op_to_lambda[Type.NIL]["=="] = lambda x, y: Value(
-            Type.BOOL, x.type() == y.type() and x.value() == y.value()
+            Type.BOOL, (x.type() == y.type() if hasattr(y, 'type') 
+                        else x.type() == y) or (x.value() == y.value() if hasattr(y, 'type') 
+                                                else x.value() == y)
         )
         self.op_to_lambda[Type.NIL]["!="] = lambda x, y: Value(
-            Type.BOOL, x.type() != y.type() or x.value() != y.value()
+            Type.BOOL, (x.type() != y.type() if hasattr(y, 'type') 
+                        else x.type() != y) or (x.value() != y.value() if hasattr(y, 'type') 
+                                                else x.value() != y)
         )
 
     def __do_if(self, if_ast):
@@ -356,8 +421,16 @@ class Interpreter(InterpreterBase):
         return (ExecStatus.RETURN, value_obj)
 
 def main():
-    program = 'func main() {\
-        print(1 == 2);\
+    program = 'func foo(ref x, delta) { /* x passed by reference, delta passed by value */\
+  x = x + delta;\
+  delta = 0;\
+}\
+func main() {\
+  x = 10;\
+  delta = 1;\
+  foo(x, delta);\
+  print(x);     /* prints 11 */\
+  print(delta); /* prints 1 */\
 }'
     interpreter = Interpreter()
     interpreter.run(program)

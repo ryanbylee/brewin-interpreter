@@ -8,6 +8,8 @@ class Type(Enum):
     BOOL = 2
     STRING = 3
     NIL = 4
+    FUNC = 5
+    REFARG = 6
 
 
 # Represents a value, which has a type and its value
@@ -30,6 +32,8 @@ def create_value(val):
         return Value(Type.BOOL, False)
     elif val == InterpreterBase.NIL_DEF:
         return Value(Type.NIL, None)
+    elif val == InterpreterBase.FUNC_DEF:
+        return Value(Type.FUNC, None)
     elif isinstance(val, str):
         return Value(Type.STRING, val)
     elif isinstance(val, int):
