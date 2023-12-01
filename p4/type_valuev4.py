@@ -11,11 +11,17 @@ class Type(Enum):
     STRING = 3
     CLOSURE = 4
     NIL = 5
+    OBJECT = 6
 
 
 class Closure:
     def __init__(self, func_ast, env):
+        # deepcopy only the primitive types (int, bool, string, etc.)
         self.captured_env = copy.deepcopy(env)
+        for idx, cur_env in enumerate(self.captured_env.environment):
+            for var_name, value in cur_env.items():
+                if value.t == Type.CLOSURE or value.t == Type.OBJECT:
+                    cur_env[var_name] = env.environment[idx][var_name]
         self.func_ast = func_ast
         self.type = Type.CLOSURE
 
